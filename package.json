@@ -1,0 +1,25 @@
+{
+  "name": "mem0-server",
+  "version": "1.0.0",
+  "module": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun run --watch src/index.ts",
+    "test": "bun run test_endpoints.ts"
+  },
+  "dependencies": {
+    "elysia": "latest",
+    "@modelcontextprotocol/sdk": "latest",
+    "mem0ai": "latest",
+    "qdrant-client": "latest",
+    "neo4j-driver": "latest",
+    "@google/generative-ai": "latest",
+    "openai": "latest",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "bun-types": "latest",
+    "typescript": "^5.4.5"
+  }
+}
