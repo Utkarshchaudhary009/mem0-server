@@ -4,20 +4,76 @@ async function testMcp() {
   console.log("🚀 Starting MCP Tests (Streamable HTTP)...");
 
   try {
-    // 1. Initiate connection (GET /mcp)
-    console.log(`Connecting to ${BASE_URL}/mcp ...`);
-    const response = await fetch(`${BASE_URL}/mcp`);
-    if (!response.ok) throw new Error(`Failed to connect: ${response.status}`);
-
-    const sessionId = response.headers.get("x-session-id") || response.headers.get("X-Session-Id");
-    console.log(`✅ Session ID received: ${sessionId}`);
-
-    if (!sessionId) throw new Error("No session ID received in headers");
-
-    // 2. List Tools via JSON-RPC (POST /mcp with Session-ID)
-    const listToolsRequest = {
+    // 1. Send 'initialize' request via POST
+    console.log(`Sending 'initialize' to ${BASE_URL}/mcp ...`);
+    
+    const initRequest = {
       jsonrpc: "2.0",
       id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: {
+          name: "test-client",
+          version: "1.0.0"
+        }
+      }
+    };
+
+    const initRes = await fetch(`${BASE_URL}/mcp`, {
+      method: "POST",
+      headers: { 
+          "Content-Type": "application/json",
+          "Accept": "application/json, text/event-stream",
+          "Authorization": "Bearer qwertyuiop1234567890"
+      },
+      body: JSON.stringify(initRequest)
+    });
+
+    if (!initRes.ok) {
+         const text = await initRes.text();
+         throw new Error(`Initialize failed: ${initRes.status} - ${text}`);
+    }
+
+    const sessionId = initRes.headers.get("x-session-id") || initRes.headers.get("X-Session-Id");
+    console.log(`✅ Session ID received: ${sessionId}`);
+    console.log("Response Headers:", JSON.stringify(Object.fromEntries(initRes.headers.entries()), null, 2));
+    
+    const text = await initRes.text();
+    console.log("Raw Response Body:", text);
+
+    try {
+        const initData = JSON.parse(text);
+        console.log("Initialize Response (Parsed):", JSON.stringify(initData, null, 2));
+    } catch (e) {
+        console.error("Failed to parse JSON response:", e);
+    }
+
+    if (!sessionId) {
+        console.warn("⚠️ No Session ID returned in headers. Running in stateless mode?");
+    }
+
+    // 2. Send 'notifications/initialized'
+    console.log("Sending 'notifications/initialized'...");
+    await fetch(`${BASE_URL}/mcp`, {
+        method: "POST",
+        headers: { 
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "Authorization": "Bearer qwertyuiop1234567890",
+            ...(sessionId ? { "x-session-id": sessionId } : {})
+        },
+        body: JSON.stringify({
+            jsonrpc: "2.0",
+            method: "notifications/initialized"
+        })
+    });
+
+    // 3. List Tools
+    const listToolsRequest = {
+      jsonrpc: "2.0",
+      id: 2,
       method: "tools/list",
       params: {}
     };
@@ -27,7 +83,9 @@ async function testMcp() {
       method: "POST",
       headers: { 
           "Content-Type": "application/json",
-          "x-session-id": sessionId
+          "Accept": "application/json, text/event-stream",
+          "Authorization": "Bearer qwertyuiop1234567890",
+          ...(sessionId ? { "x-session-id": sessionId } : {})
       },
       body: JSON.stringify(listToolsRequest)
     });
@@ -41,10 +99,10 @@ async function testMcp() {
       throw new Error("Failed to list tools or invalid response format");
     }
 
-    // 3. Call Tool (e.g., get_all_memories)
+    // 4. Call Tool (e.g., get_all_memories)
     const callToolRequest = {
       jsonrpc: "2.0",
-      id: 2,
+      id: 3,
       method: "tools/call",
       params: {
         name: "get_all_memories",
@@ -59,7 +117,9 @@ async function testMcp() {
       method: "POST",
       headers: { 
           "Content-Type": "application/json",
-          "x-session-id": sessionId
+          "Accept": "application/json, text/event-stream",
+          "Authorization": "Bearer qwertyuiop1234567890",
+          ...(sessionId ? { "x-session-id": sessionId } : {})
       },
       body: JSON.stringify(callToolRequest)
     });

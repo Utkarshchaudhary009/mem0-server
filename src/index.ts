@@ -173,6 +173,24 @@ await mcpServer.connect(transport);
 
 // --- HTTP Server (REST + MCP) ---
 const app = new Elysia()
+  .onRequest(({ request, set }) => {
+    const url = new URL(request.url);
+    if (url.pathname === "/") return; // Allow health check
+    
+    const authHeader = request.headers.get("Authorization");
+    const expectedToken = `Bearer ${process.env.MCP_PASSWORD}`;
+    
+    if (authHeader !== expectedToken) {
+      set.status = 401;
+      return { 
+        jsonrpc: "2.0",
+        error: {
+          code: -32000,
+          message: "Unauthorized: Invalid or missing token"
+        }
+      };
+    }
+  })
   .get('/', () => ({ status: "running", service: "Mem0 AI Memory (MCP + REST)" }))
 
   // --- REST Endpoints ---
