@@ -10,8 +10,8 @@ RUN bun install --frozen-lockfile --production
 COPY . .
 
 # Expose port
-ENV PORT=3000
-EXPOSE 3000
+# Render sets PORT=10000 by default
+EXPOSE 10000
 
 # Start command
 CMD ["bun", "run", "src/index.ts"]

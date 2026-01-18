@@ -281,13 +281,16 @@ const app = new Elysia()
       return { error: "No active connection" };
   })
   
-  .listen(process.env.PORT || 3000);
+  .listen({
+    port: parseInt(process.env.PORT || "3000"),
+    hostname: "0.0.0.0"
+  });
 
 // Also listen on Stdio for CLI usage
 // Note: Running both might be conflicting if they share the same server instance state?
 // Actually, `connect` binds the server to a transport. You can connect multiple transports.
-const stdioTransport = new StdioServerTransport();
-mcpServer.connect(stdioTransport);
+// const stdioTransport = new StdioServerTransport();
+// mcpServer.connect(stdioTransport);
 
 console.log(`🧠 Mem0 Service is running at ${app.server?.hostname}:${app.server?.port}`);
 console.log(`🔌 MCP Server exposed via Stdio and REST`);
