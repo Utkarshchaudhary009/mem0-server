@@ -1,13 +1,6 @@
 import { Elysia, t } from 'elysia';
 import { Memory } from 'mem0ai/oss';
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  ErrorCode,
-  McpError
-} from "@modelcontextprotocol/sdk/types.js";
+import { randomUUID } from 'crypto';
 
 // --- Configuration ---
 const config = {
@@ -45,144 +38,221 @@ const config = {
 };
 
 console.log("Configuration loaded:", JSON.stringify({
-    ...config,
-    vector_store: { ...config.vector_store, config: { ...config.vector_store.config, apiKey: "********", collectionName: "mem0_gemini_test_v3" } },
-    graph_store: { ...config.graph_store, config: { ...config.graph_store.config, password: "********" } },
-    embedder: { ...config.embedder, config: { ...config.embedder.config, apiKey: "********" } },
-    llm: { ...config.llm, config: { ...config.llm.config, apiKey: "********" } }
+  ...config,
+  vector_store: { ...config.vector_store, config: { ...config.vector_store.config, apiKey: "********" } },
+  graph_store: { ...config.graph_store, config: { ...config.graph_store.config, password: "********" } },
+  embedder: { ...config.embedder, config: { ...config.embedder.config, apiKey: "********" } },
+  llm: { ...config.llm, config: { ...config.llm.config, apiKey: "********" } }
 }, null, 2));
 
 // --- Initialize Core Services ---
 const memory = new Memory(config);
 
-// --- MCP Server Setup ---
-const mcpServer = new Server(
+// --- MCP Session Management ---
+const sessions: Map<string, { createdAt: Date; lastAccess: Date }> = new Map();
+
+// Clean up old sessions (older than 1 hour)
+setInterval(() => {
+  const now = Date.now();
+  for (const [sessionId, session] of sessions.entries()) {
+    if (now - session.lastAccess.getTime() > 3600000) {
+      sessions.delete(sessionId);
+      console.log(`Session expired: ${sessionId}`);
+    }
+  }
+}, 60000);
+
+// --- MCP Tool Definitions ---
+const MCP_TOOLS = [
   {
-    name: "mem0-mcp-server",
-    version: "1.0.0",
+    name: 'add_memory',
+    description: 'Store a new memory or conversation for a user. Use this to save important information, preferences, or context that should be remembered.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        messages: {
+          anyOf: [{ type: 'string' }, { type: 'array' }],
+          description: 'Message content or conversation to store'
+        },
+        user_id: { type: 'string', description: 'Unique user identifier' },
+        metadata: { type: 'object', description: 'Optional metadata to attach' }
+      },
+      required: ['messages', 'user_id']
+    }
   },
   {
-    capabilities: {
-      tools: {},
-    },
+    name: 'search_memories',
+    description: 'Semantically search through stored memories. Use this to find relevant past information, preferences, or context.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query' },
+        user_id: { type: 'string', description: 'User ID to search memories for' },
+        limit: { type: 'number', description: 'Maximum number of results (default: 5)' }
+      },
+      required: ['query', 'user_id']
+    }
+  },
+  {
+    name: 'get_all_memories',
+    description: 'Retrieve all memories for a specific user. Use this to get a complete history of stored information.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user_id: { type: 'string', description: 'User ID to retrieve memories for' }
+      },
+      required: ['user_id']
+    }
+  },
+  {
+    name: 'delete_memory',
+    description: 'Delete a specific memory by its ID. Use this to remove outdated or incorrect information.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        memory_id: { type: 'string', description: 'The unique identifier of the memory to delete' }
+      },
+      required: ['memory_id']
+    }
   }
-);
+];
 
-// Define Tools
-mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: [
-      {
-        name: "add_memory",
-        description: "Add a new memory to the system",
-        inputSchema: {
-          type: "object",
-          properties: {
-            messages: {
-              oneOf: [{ type: "string" }, { type: "array", items: { type: "any" } }],
-              description: "The content of the memory (string or array of messages)"
-            },
-            user_id: { type: "string", description: "The ID of the user" },
-            metadata: { type: "object", description: "Optional metadata" }
-          },
-          required: ["messages", "user_id"]
-        }
-      },
-      {
-        name: "search_memory",
-        description: "Search for existing memories",
-        inputSchema: {
-          type: "object",
-          properties: {
-            query: { type: "string", description: "The search query" },
-            user_id: { type: "string", description: "The ID of the user" },
-            limit: { type: "number", description: "Max number of results (default 5)" }
-          },
-          required: ["query", "user_id"]
-        }
-      },
-      {
-        name: "get_all_memories",
-        description: "Get all memories for a user",
-        inputSchema: {
-          type: "object",
-          properties: {
-            user_id: { type: "string", description: "The ID of the user" }
-          },
-          required: ["user_id"]
-        }
-      },
-      {
-        name: "delete_memory",
-        description: "Delete a specific memory",
-        inputSchema: {
-          type: "object",
-          properties: {
-            memory_id: { type: "string", description: "The ID of the memory to delete" }
-          },
-          required: ["memory_id"]
-        }
-      }
-    ]
-  };
-});
+// --- MCP Server Info ---
+const MCP_SERVER_INFO = {
+  name: 'mem0-memory-server',
+  version: '1.0.0'
+};
 
-mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
+const MCP_CAPABILITIES = {
+  tools: {},
+  resources: {},
+  prompts: {},
+  logging: {}
+};
 
+// --- MCP Tool Execution ---
+async function executeTool(name: string, args: Record<string, any>): Promise<{ content: any[]; isError?: boolean }> {
   try {
     switch (name) {
-      case "add_memory": {
-        const { messages, user_id, metadata } = args as any;
-        const result = await memory.add(messages, { userId: user_id, metadata });
-        return { content: [{ type: "text", text: JSON.stringify(result) }] };
+      case 'add_memory': {
+        const result = await memory.add(args.messages, {
+          userId: args.user_id,
+          metadata: args.metadata
+        });
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ success: true, data: result }, null, 2)
+          }]
+        };
       }
-      case "search_memory": {
-        const { query, user_id, limit } = args as any;
-        const result = await memory.search(query, { userId: user_id, limit: limit || 5 });
-        return { content: [{ type: "text", text: JSON.stringify(result) }] };
+
+      case 'search_memories': {
+        const result = await memory.search(args.query, {
+          userId: args.user_id,
+          limit: args.limit || 5
+        });
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ success: true, data: result }, null, 2)
+          }]
+        };
       }
-      case "get_all_memories": {
-        const { user_id } = args as any;
-        const result = await memory.getAll({ userId: user_id });
-        return { content: [{ type: "text", text: JSON.stringify(result) }] };
+
+      case 'get_all_memories': {
+        const result = await memory.getAll({ userId: args.user_id });
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ success: true, data: result }, null, 2)
+          }]
+        };
       }
-      case "delete_memory": {
-        const { memory_id } = args as any;
-        await memory.delete(memory_id);
-        return { content: [{ type: "text", text: "Memory deleted successfully" }] };
+
+      case 'delete_memory': {
+        await memory.delete(args.memory_id);
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ success: true, message: 'Memory deleted successfully' })
+          }]
+        };
       }
+
       default:
-        throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ success: false, error: `Unknown tool: ${name}` })
+          }],
+          isError: true
+        };
     }
   } catch (error: any) {
     return {
-      content: [{ type: "text", text: `Error: ${error.message}` }],
-      isError: true,
+      content: [{
+        type: 'text',
+        text: JSON.stringify({ success: false, error: error.message })
+      }],
+      isError: true
     };
   }
-});
+}
 
-// Initialize Transport
-const transport = new WebStandardStreamableHTTPServerTransport({
-    sessionIdGenerator: () => crypto.randomUUID(),
-});
+// --- MCP JSON-RPC Handler ---
+async function handleMcpMethod(method: string, params: any, sessionId: string | null): Promise<any> {
+  switch (method) {
+    case 'initialize':
+      // Create new session
+      const newSessionId = randomUUID();
+      sessions.set(newSessionId, { createdAt: new Date(), lastAccess: new Date() });
+      console.log(`MCP Session initialized: ${newSessionId}`);
 
-// Connect server to transport
-await mcpServer.connect(transport);
+      return {
+        _sessionId: newSessionId, // Special field to indicate new session
+        protocolVersion: '2025-11-25',
+        capabilities: MCP_CAPABILITIES,
+        serverInfo: MCP_SERVER_INFO
+      };
+
+    case 'initialized':
+      // Client acknowledgment - no response needed
+      return null;
+
+    case 'tools/list':
+      return { tools: MCP_TOOLS };
+
+    case 'tools/call':
+      const toolResult = await executeTool(params.name, params.arguments || {});
+      return toolResult;
+
+    case 'resources/list':
+      return { resources: [] };
+
+    case 'prompts/list':
+      return { prompts: [] };
+
+    case 'ping':
+      return {};
+
+    default:
+      throw { code: -32601, message: `Method not found: ${method}` };
+  }
+}
 
 // --- HTTP Server (REST + MCP) ---
 const app = new Elysia()
   .onRequest(({ request, set }) => {
     const url = new URL(request.url);
     if (url.pathname === "/") return; // Allow health check
-    
+
     const authHeader = request.headers.get("Authorization");
     const expectedToken = `Bearer ${process.env.MCP_PASSWORD}`;
-    
+
     if (authHeader !== expectedToken) {
       set.status = 401;
-      return { 
+      return {
         jsonrpc: "2.0",
         error: {
           code: -32000,
@@ -236,21 +306,156 @@ const app = new Elysia()
   })
 
   .delete('/memories/:memory_id', async ({ params: { memory_id } }) => {
-     try {
-       await memory.delete(memory_id);
-       return { success: true, message: "Memory deleted" };
-     } catch (error: any) {
-       return { success: false, error: error.message };
-     }
+    try {
+      await memory.delete(memory_id);
+      return { success: true, message: "Memory deleted" };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
   })
 
-  // --- MCP Endpoints ---
-  // The transport handles GET, POST, DELETE automatically.
-  .all('/mcp', async ({ request }) => {
-      console.log(`MCP Request: ${request.method} ${request.url}`);
-      return await transport.handleRequest(request);
+  // --- MCP Streamable HTTP Endpoint ---
+  .post('/mcp', async ({ request, set }) => {
+    const sessionId = request.headers.get('mcp-session-id');
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      set.status = 400;
+      return {
+        jsonrpc: "2.0",
+        error: { code: -32700, message: "Parse error" },
+        id: null
+      };
+    }
+
+    console.log(`MCP POST - Session: ${sessionId || 'new'}, Method: ${body?.method}`);
+
+    // Validate session for non-initialize requests
+    if (body?.method !== 'initialize' && body?.method !== 'initialized') {
+      if (!sessionId || !sessions.has(sessionId)) {
+        set.status = 400;
+        return {
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "Invalid or missing session ID" },
+          id: body?.id || null
+        };
+      }
+      // Update last access
+      const session = sessions.get(sessionId);
+      if (session) session.lastAccess = new Date();
+    }
+
+    try {
+      const result = await handleMcpMethod(body.method, body.params || {}, sessionId);
+
+      // Handle notifications (no response needed)
+      if (result === null) {
+        set.status = 202;
+        return null;
+      }
+
+      // Check if this is an initialize response with new session
+      if (result._sessionId) {
+        const newSessionId = result._sessionId;
+        delete result._sessionId;
+        set.headers['mcp-session-id'] = newSessionId;
+        set.headers['mcp-protocol-version'] = '2025-11-25';
+      }
+
+      return {
+        jsonrpc: "2.0",
+        result,
+        id: body.id
+      };
+    } catch (error: any) {
+      return {
+        jsonrpc: "2.0",
+        error: {
+          code: error.code || -32603,
+          message: error.message || "Internal error"
+        },
+        id: body?.id || null
+      };
+    }
   })
-  
+
+  // GET for SSE stream (server-initiated notifications)
+  .get('/mcp', async ({ request, set }) => {
+    const sessionId = request.headers.get('mcp-session-id');
+
+    if (!sessionId || !sessions.has(sessionId)) {
+      set.status = 400;
+      return { error: "Invalid or missing session ID" };
+    }
+
+    // Update last access
+    const session = sessions.get(sessionId);
+    if (session) session.lastAccess = new Date();
+
+    console.log(`MCP GET SSE - Session: ${sessionId}`);
+
+    // Return SSE stream for server notifications
+    set.headers['content-type'] = 'text/event-stream';
+    set.headers['cache-control'] = 'no-cache';
+    set.headers['connection'] = 'keep-alive';
+
+    // For now, return a simple connected event
+    // Full SSE would require streaming response handling
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          const encoder = new TextEncoder();
+          controller.enqueue(encoder.encode('event: open\ndata: {"type":"connected"}\n\n'));
+
+          // Keep connection alive with periodic pings
+          const pingInterval = setInterval(() => {
+            try {
+              controller.enqueue(encoder.encode(': ping\n\n'));
+            } catch {
+              clearInterval(pingInterval);
+            }
+          }, 30000);
+
+          // Clean up on close
+          setTimeout(() => {
+            clearInterval(pingInterval);
+            controller.close();
+          }, 300000); // 5 minute timeout
+        }
+      }),
+      {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'Access-Control-Allow-Origin': '*'
+        }
+      }
+    );
+  })
+
+  // DELETE for session termination
+  .delete('/mcp', async ({ request, set }) => {
+    const sessionId = request.headers.get('mcp-session-id');
+
+    if (!sessionId) {
+      set.status = 400;
+      return { error: "Missing session ID" };
+    }
+
+    if (sessions.has(sessionId)) {
+      sessions.delete(sessionId);
+      console.log(`MCP Session terminated: ${sessionId}`);
+      set.status = 202;
+      return null;
+    }
+
+    set.status = 404;
+    return { error: "Session not found" };
+  })
+
   .listen({
     port: parseInt(process.env.PORT || "3000"),
     hostname: "0.0.0.0"
@@ -258,13 +463,5 @@ const app = new Elysia()
 
 console.log(`🧠 Mem0 Service is running at ${app.server?.hostname}:${app.server?.port}`);
 console.log(`🔌 MCP Server exposed via /mcp (Streamable HTTP)`);
-
-
-// Also listen on Stdio for CLI usage
-// Note: Running both might be conflicting if they share the same server instance state?
-// Actually, `connect` binds the server to a transport. You can connect multiple transports.
-// const stdioTransport = new StdioServerTransport();
-// mcpServer.connect(stdioTransport);
-
-console.log(`🧠 Mem0 Service is running at ${app.server?.hostname}:${app.server?.port}`);
-console.log(`🔌 MCP Server exposed via Stdio and REST`);
+console.log(`📝 REST API available at /memories`);
+console.log(`🔐 Authentication: Bearer token required`);
