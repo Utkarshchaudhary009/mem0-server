@@ -40,7 +40,7 @@ const config = {
     config: {
       model: "glm-4-flash",
       apiKey: process.env.ZHIPU_API_KEY,
-      baseURL: "https://api.z.ai/api/coding/paas/v4"
+      baseURL: "https://open.bigmodel.cn/api/paas/v4/"
     }
   }
 };
