@@ -16,7 +16,8 @@ const config = {
     provider: "qdrant",
     config: {
       url: process.env.QDRANT_URL,
-      api_key: process.env.QDRANT_API_KEY,
+      apiKey: process.env.QDRANT_API_KEY,
+      collectionName: "mem0_gemini_768"
     }
   },
   graph_store: {
@@ -31,18 +32,26 @@ const config = {
     provider: "gemini",
     config: {
       model: "models/text-embedding-004",
-      api_key: process.env.GOOGLE_API_KEY
+      apiKey: process.env.GOOGLE_API_KEY
     }
   },
   llm: {
     provider: "openai",
     config: {
       model: "glm-4-flash",
-      api_key: process.env.ZHIPU_API_KEY,
-      base_url: "https://api.z.ai/api/coding/paas/v4"
+      apiKey: process.env.ZHIPU_API_KEY,
+      baseUrl: "https://api.z.ai/api/coding/paas/v4"
     }
   }
 };
+
+console.log("Configuration loaded:", JSON.stringify({
+    ...config,
+    vector_store: { ...config.vector_store, config: { ...config.vector_store.config, apiKey: "********" } },
+    graph_store: { ...config.graph_store, config: { ...config.graph_store.config, password: "********" } },
+    embedder: { ...config.embedder, config: { ...config.embedder.config, apiKey: "********" } },
+    llm: { ...config.llm, config: { ...config.llm.config, apiKey: "********" } }
+}, null, 2));
 
 // --- Initialize Core Services ---
 const memory = new Memory(config);
