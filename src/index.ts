@@ -126,17 +126,17 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
     switch (name) {
       case "add_memory": {
         const { messages, user_id, metadata } = args as any;
-        const result = await memory.add(messages, { user_id, metadata });
+        const result = await memory.add(messages, { userId: user_id, metadata });
         return { content: [{ type: "text", text: JSON.stringify(result) }] };
       }
       case "search_memory": {
         const { query, user_id, limit } = args as any;
-        const result = await memory.search(query, { user_id, limit: limit || 5 });
+        const result = await memory.search(query, { userId: user_id, limit: limit || 5 });
         return { content: [{ type: "text", text: JSON.stringify(result) }] };
       }
       case "get_all_memories": {
         const { user_id } = args as any;
-        const result = await memory.getAll({ user_id });
+        const result = await memory.getAll({ userId: user_id });
         return { content: [{ type: "text", text: JSON.stringify(result) }] };
       }
       case "delete_memory": {
@@ -170,7 +170,7 @@ const app = new Elysia()
   .post('/memories', async ({ body }) => {
     const { messages, user_id, metadata } = body;
     try {
-      const result = await memory.add(messages, { user_id, metadata });
+      const result = await memory.add(messages, { userId: user_id, metadata });
       return { success: true, data: result };
     } catch (error: any) {
       return { success: false, error: error.message };
@@ -186,7 +186,7 @@ const app = new Elysia()
   .post('/memories/search', async ({ body }) => {
     const { query, user_id, limit } = body;
     try {
-      const result = await memory.search(query, { user_id, limit: limit || 5 });
+      const result = await memory.search(query, { userId: user_id, limit: limit || 5 });
       return { success: true, data: result };
     } catch (error: any) {
       return { success: false, error: error.message };
@@ -201,7 +201,7 @@ const app = new Elysia()
 
   .get('/memories/:user_id', async ({ params: { user_id } }) => {
     try {
-      const result = await memory.getAll({ user_id });
+      const result = await memory.getAll({ userId: user_id });
       return { success: true, data: result };
     } catch (error: any) {
       return { success: false, error: error.message };
