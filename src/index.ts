@@ -1,8 +1,7 @@
 import { Elysia, t } from 'elysia';
 import { Memory } from 'mem0ai/oss';
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -164,14 +163,15 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// --- HTTP Server (REST + MCP SSE) ---
+// Initialize Transport
+const transport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: () => crypto.randomUUID(),
+});
 
-// Transport storage for SSE connections
-// In a real multi-client scenario, you might need a map of transports.
-// For simplicity, we create a new transport per connection logic inside the route handler,
-// but the SDK's SSEServerTransport is designed to handle the lifecycle.
-let transport: SSEServerTransport | null = null;
+// Connect server to transport
+await mcpServer.connect(transport);
 
+// --- HTTP Server (REST + MCP) ---
 const app = new Elysia()
   .get('/', () => ({ status: "running", service: "Mem0 AI Memory (MCP + REST)" }))
 
@@ -226,74 +226,21 @@ const app = new Elysia()
      }
   })
 
-  // --- MCP SSE Endpoints ---
-  
-  .get('/mcp/sse', async (context) => {
-    transport = new SSEServerTransport("/mcp/messages", context.res as any);
-    await mcpServer.connect(transport);
-    
-    // Elysia handling for SSE is usually via streams or direct response.
-    // The SSEServerTransport usually handles writing to the response.
-    // We need to bridge Elysia's Response to what SSEServerTransport expects (Node http ServerResponse usually)
-    // OR, manually handle the SSE stream.
-    
-    // Since adapting Node's ServerResponse to Elysia/Bun can be tricky, 
-    // a simpler approach for Bun is to use a manual Stream.
-    // However, the MCP SDK is coupled to Node streams.
-    
-    // For now, let's assume we run this with `bun run`, which implements node:http compatibility.
-    // If SSEServerTransport writes headers and body, we might need to bypass Elysia's return and let it handle the underlying request?
-    // In Bun/Elysia, we might need to return a Response object.
-    
-    // ALTERNATIVE: Use Stdio if the user wants to run it locally via `bun run`.
-    // BUT the user asked for "exposed", implying network.
-    
-    // Let's implement a basic SSE stream compatible with what MCP client expects.
-    return new Response(new ReadableStream({
-        start(controller) {
-             transport = new SSEServerTransport("/mcp/messages", {
-                 // Mocking the Node Response object methods used by SDK
-                 writeHead: (status: number, headers: any) => { /* Already set by returning Response? No, this is tricky */ },
-                 write: (chunk: any) => controller.enqueue(chunk),
-                 end: () => controller.close(),
-             } as any);
-             
-             // We need to trick the SDK or just handle connection manually.
-             // Actually, the simplest way to run MCP over HTTP in Bun is likely just using `Stdio` 
-             // and let the user use a generic "stdio-over-http" bridge OR just use Stdio.
-             
-             // RE-READING: "make it mcp and rest both exposed".
-             // If I use Stdio, it's exposed to the parent process.
-             // If I want to expose over HTTP, I need SSE.
-             
-             // Let's try to do it properly with Bun.
-             // The SDK's SSEServerTransport writes to a `res`.
-             
-             mcpServer.connect(transport);
-        }
-    }), {
-        headers: {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive"
-        }
-    });
-  })
-
-  .post('/mcp/messages', async ({ body }) => {
-      if (transport) {
-          await transport.handlePostMessage({
-              body: body // The SDK expects parsed body or req? handlePostMessage(req, res, parsedBody)
-          } as any, {} as any, body);
-          return { success: true };
-      }
-      return { error: "No active connection" };
+  // --- MCP Endpoints ---
+  // The transport handles GET, POST, DELETE automatically.
+  .all('/mcp', async ({ request }) => {
+      console.log(`MCP Request: ${request.method} ${request.url}`);
+      return await transport.handleRequest(request);
   })
   
   .listen({
     port: parseInt(process.env.PORT || "3000"),
     hostname: "0.0.0.0"
   });
+
+console.log(`🧠 Mem0 Service is running at ${app.server?.hostname}:${app.server?.port}`);
+console.log(`🔌 MCP Server exposed via /mcp (Streamable HTTP)`);
+
 
 // Also listen on Stdio for CLI usage
 // Note: Running both might be conflicting if they share the same server instance state?
