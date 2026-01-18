@@ -38,9 +38,9 @@ const config = {
   llm: {
     provider: "openai",
     config: {
-      model: "glm-4-flash",
+      model: "glm-4.5-flash",
       apiKey: process.env.ZHIPU_API_KEY,
-      baseURL: "https://open.bigmodel.cn/api/paas/v4/"
+      baseURL: "https://api.z.ai/api/paas/v4/"
     }
   }
 };
