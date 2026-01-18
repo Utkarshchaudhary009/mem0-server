@@ -1,5 +1,5 @@
 import { Elysia, t } from 'elysia';
-import { Memory } from 'mem0ai';
+import { Memory } from 'mem0ai/oss';
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
