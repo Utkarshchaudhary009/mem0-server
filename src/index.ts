@@ -17,7 +17,7 @@ const config = {
     config: {
       url: process.env.QDRANT_URL,
       apiKey: process.env.QDRANT_API_KEY,
-      collectionName: "mem0_gemini_768"
+      collectionName: "mem0_gemini_test_v3"
     }
   },
   graph_store: {
@@ -31,7 +31,7 @@ const config = {
   embedder: {
     provider: "gemini",
     config: {
-      model: "models/text-embedding-004",
+      model: "models/gemini-embedding-001",
       apiKey: process.env.GOOGLE_API_KEY
     }
   },
@@ -40,14 +40,14 @@ const config = {
     config: {
       model: "glm-4-flash",
       apiKey: process.env.ZHIPU_API_KEY,
-      baseUrl: "https://api.z.ai/api/coding/paas/v4"
+      baseURL: "https://api.z.ai/api/coding/paas/v4"
     }
   }
 };
 
 console.log("Configuration loaded:", JSON.stringify({
     ...config,
-    vector_store: { ...config.vector_store, config: { ...config.vector_store.config, apiKey: "********" } },
+    vector_store: { ...config.vector_store, config: { ...config.vector_store.config, apiKey: "********", collectionName: "mem0_gemini_test_v3" } },
     graph_store: { ...config.graph_store, config: { ...config.graph_store.config, password: "********" } },
     embedder: { ...config.embedder, config: { ...config.embedder.config, apiKey: "********" } },
     llm: { ...config.llm, config: { ...config.llm.config, apiKey: "********" } }
